@@ -1,11 +1,26 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:http/http.dart' as http;
+import 'package:wakelock/wakelock.dart';
 
-void main() => runApp(const MyApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Set the system UI overlay style to fullscreen
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarDividerColor: null,
+    systemNavigationBarIconBrightness: Brightness.light,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.dark,
+  ));
+  runApp(const MyApp());
+}
 
 class MyApp extends StatefulWidget {
   const MyApp({
@@ -17,29 +32,18 @@ class MyApp extends StatefulWidget {
 }
 
 class MyAppState extends State<MyApp> {
-  CompassEvent? _lastRead;
-  DateTime? _lastReadAt;
+  double userHeadingRaw = 0;
+  int userHeading = 0;
+  int userHeadingBefore = 0;
+  bool isSwitched = false;
+  bool isDimmed = false;
+  int calibrate = 0;
+  String link = "";
 
   Future<void> sendData() async {
-    final CompassEvent tmp2 = await FlutterCompass.events!.first;
-    double? userHeading;
-
-    await FlutterCompass.events!.listen((event) {
-      userHeading = event.heading;
-    });
-    final CompassEvent tmp = await FlutterCompass.events!.first;
-    setState(() {
-      _lastRead = tmp2;
-    });
-    final response = await http.get(
-      Uri.parse('http://192.168.0.195:5000/robot1/${userHeading?.round()}'),
+    http.get(
+      Uri.parse('http://$link/$userHeading'),
     );
-
-    if (response.statusCode == 200) {
-      // print('oke');
-    } else {
-      throw Exception('Failed to fetch data');
-    }
   }
 
   @override
@@ -49,104 +53,144 @@ class MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      sendData();
-      // timer.cancel();
+    Wakelock.enable();
+    FlutterCompass.events!.listen((event) {
+      userHeadingRaw = event.heading!;
+      userHeading = userHeadingRaw.round() + 180;
+      userHeading -= calibrate;
+      if (userHeading < 0) {
+        userHeading += 360;
+      } else if (userHeading > 360) {
+        userHeading -= 360;
+      }
+      if ((userHeading != userHeadingBefore) && isSwitched) {
+        if (Uri.tryParse('http://$link')?.hasAbsolutePath ?? false) {
+          sendData();
+        } else {
+          isSwitched = false;
+        }
+      }
+      setState(() {});
+      userHeadingBefore = userHeading;
     });
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
       home: Scaffold(
-        backgroundColor: Colors.white,
-        appBar: AppBar(
-          title: const Text('Flutter Compass'),
-        ),
+        backgroundColor: Colors.black,
         body: Builder(builder: (context) {
-          return Column(
-            children: <Widget>[
-              _buildManualReader(),
-              Expanded(child: _buildCompass()),
-            ],
+          return SafeArea(
+            child: Stack(
+              children: [
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 16),
+                        Text(
+                          '$userHeading',
+                          style: const TextStyle(fontSize: 50),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Column(
+                              children: [
+                                FloatingActionButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      calibrate = userHeadingRaw.round() + 180;
+                                    });
+                                  },
+                                  child: const Icon(Icons.north),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Text('Calibrate'),
+                                ),
+                              ],
+                            ),
+                            Column(
+                              children: [
+                                FloatingActionButton(
+                                  backgroundColor: isSwitched
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .primaryContainer
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .background,
+                                  onPressed: () {
+                                    setState(() {
+                                      setState(() {
+                                        isSwitched = !isSwitched;
+                                      });
+                                    });
+                                  },
+                                  child: const Icon(Icons.wifi_rounded),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Text('Emit signal'),
+                                ),
+                              ],
+                            ),
+                            Column(
+                              children: [
+                                FloatingActionButton(
+                                  onPressed: () {
+                                    isDimmed = true;
+                                  },
+                                  child: const Icon(
+                                      Icons.lightbulb_outline_rounded),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Text('Dim screen'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        TextField(
+                          decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              hintText: '192.168.0.100:5000/robot1',
+                              label: Text('Link')),
+                          onChanged: (value) {
+                            setState(() {
+                              link = value;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (isDimmed)
+                  Align(
+                    child: GestureDetector(
+                      onDoubleTap: () {
+                        isDimmed = false;
+                      },
+                      child: Container(
+                        color: Colors.black,
+                      ),
+                    ),
+                  )
+              ],
+            ),
           );
         }),
       ),
-    );
-  }
-
-  Widget _buildManualReader() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Row(
-        children: <Widget>[
-          ElevatedButton(
-            child: const Text('Read Value'),
-            onPressed: () async {
-              final CompassEvent tmp = await FlutterCompass.events!.first;
-              setState(() {
-                _lastRead = tmp;
-                _lastReadAt = DateTime.now();
-              });
-            },
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    '$_lastRead',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  Text(
-                    '$_lastReadAt',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCompass() {
-    return StreamBuilder<CompassEvent>(
-      stream: FlutterCompass.events,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Text('Error reading heading: ${snapshot.error}');
-        }
-
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(),
-          );
-        }
-
-        double? direction = snapshot.data!.heading;
-        if (direction == null) {
-          return const Center(
-            child: Text("Device does not have sensors !"),
-          );
-        }
-
-        return Material(
-          shape: const CircleBorder(),
-          clipBehavior: Clip.antiAlias,
-          elevation: 4.0,
-          child: Container(
-            padding: const EdgeInsets.all(16.0),
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-            ),
-            child: Transform.rotate(
-              angle: (direction * (math.pi / 180) * -1),
-              child: Image.asset('assets/compass.jpg'),
-            ),
-          ),
-        );
-      },
     );
   }
 }
