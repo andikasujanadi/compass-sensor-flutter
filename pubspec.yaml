@@ -40,6 +40,7 @@ dependencies:
       url: https://github.com/hemanthrajv/flutter_compass
   http: ^0.13.6
   wakelock: ^0.6.2
+  shared_preferences: ^2.1.1
 
 dev_dependencies:
   flutter_test:
